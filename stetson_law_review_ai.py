@@ -1,258 +1,231 @@
 """
-⚖️ Stetson Law Review AI Assistant — Windows & Streamlit Version
-Elegant, semantic search + 8-line summaries + analytics + reading list.
-Fully local, no API keys, works with random filenames.
+⚖️ Stetson Law Review AI Assistant
+Elegant, academic, and intuitive — built for Stetson Law students.
+Supports semantic search, summaries, relevance ranking, and downloads.
 """
 
-# ================== Auto Install ==================
-import sys, subprocess, importlib
+# ================== Auto Install Dependencies ==================
+import importlib, subprocess, sys, os
+
 def ensure(pkg):
     try:
         importlib.import_module(pkg.replace("-", "_"))
     except ImportError:
         subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
 
-for p in [
+packages = [
     "streamlit", "torch", "sentence-transformers", "faiss-cpu",
-    "langchain-community", "langchain-text-splitters", "pypdf",
-    "pandas", "plotly", "scikit-learn"
-]:
+    "langchain-community", "pypdf", "pandas", "plotly"
+]
+for p in packages:
     ensure(p)
 
 # ================== Imports ==================
-import os, re, io, time, csv
+import re, io, time, zipfile, csv
 from pathlib import Path
 from datetime import datetime, date
-from typing import List, Dict, Optional
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from sentence_transformers import SentenceTransformer
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import SentenceTransformerEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_community.docstore.document import Document
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# ================== Theme ==================
-APP_TITLE = "⚖️ Stetson Law Review AI Assistant"
-PRIMARY, GOLD, IVORY, FONT = "#0A3D62", "#C49E56", "#FAFAF8", "Georgia, serif"
-CONTACT_EMAIL = "lreview@law.stetson.edu"
-DISCLAIMER = "Unofficial academic project by Sarthak Pattnaik using public Stetson Law Review archives."
-
-st.set_page_config(page_title=APP_TITLE, page_icon="⚖️", layout="wide")
-st.markdown(f"""
-<style>
-html, body, [class*="css"]  {{ background-color: {IVORY}; }}
-h1, h2, h3, h4 {{ font-family:{FONT}; color:{PRIMARY}; }}
-.card {{
-  background: linear-gradient(180deg, #ffffff 0%, #fbfbfb 100%);
-  border: 1px solid {GOLD};
-  border-radius: 18px;
-  padding: 18px;
-  margin-bottom: 14px;
-  box-shadow: 0 2px 12px rgba(10,61,98,.10);
-  transition: transform .15s ease-in-out, box-shadow .15s ease-in-out;
-}}
-.card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 22px rgba(10,61,98,.18); }}
-.score-badge {{
-  float:right; background:{GOLD}; color:{PRIMARY}; padding:3px 8px;
-  border-radius:12px; font-size:12px; font-weight:700;
-}}
-section[data-testid="stSidebar"] {{ background-color: {PRIMARY}; color: #fff; }}
-</style>
-""", unsafe_allow_html=True)
-
-# ================== PATHS ==================
-VOLUMES_ROOT = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai\volumes")  # ✅ RAW STRING FIX
-BASE_DIR = VOLUMES_ROOT.parent
+# ================== Paths ==================
+BASE_DIR = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai")
+VOLUMES_ROOT = BASE_DIR / "volumes"
+VOLUME_FOLDERS = [VOLUMES_ROOT / f"Volume {i}" for i in range(30, 56)]
+PDF_DIRS = [p for p in VOLUME_FOLDERS if p.exists()]
 INDEX_DIR = BASE_DIR / "stetson_index"
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOAD_LOG = BASE_DIR / "downloads.csv"
 
-# ================== HELPERS ==================
+# ================== App Constants ==================
+APP_TITLE = "⚖️ Stetson Law Review AI Assistant"
+PRIMARY, GOLD, IVORY = "#0A3D62", "#C49E56", "#F5F3EE"
+CONTACT_EMAIL = "lreview@law.stetson.edu"
+DISCLAIMER = "Unofficial academic project by Sarthak Pattnaik."
+
+# ================== Streamlit UI Config ==================
+st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="⚖️")
+
+st.markdown(
+    f"""
+    <style>
+    html, body, [class*="css"]  {{ background-color: {IVORY}; color:{PRIMARY}; font-family: Georgia; }}
+    h1, h2, h3, h4 {{ color: {PRIMARY}; font-family: Georgia; }}
+    .card {{ background: white; border-radius: 12px; padding: 16px; margin: 8px 0; border: 1px solid {GOLD}; }}
+    .score-badge {{ float:right; background:{GOLD}; color:{PRIMARY}; padding:3px 8px; border-radius:8px; font-size:12px; }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ================== Utility Functions ==================
+def get_all_pdfs():
+    pdfs = []
+    for vol_dir in PDF_DIRS:
+        pdfs.extend(vol_dir.rglob("*.pdf"))
+    return pdfs
+
 def prettify_filename(name: str) -> str:
-    return re.sub(r"[_\-]+", " ", Path(name).stem).strip().title()
+    name = os.path.splitext(name)[0]
+    name = re.sub(r"[_\-]+", " ", name)
+    return name.strip().title()
 
 def extract_volume(name: str) -> str:
-    m = re.search(r"vol(?:ume)?\s*(\d+)", name.lower())
+    m = re.search(r"Volume\s*(\d+)", name, re.IGNORECASE)
     return f"Volume {m.group(1)}" if m else "Unknown Volume"
 
-def get_all_pdfs() -> List[Path]:
-    if not VOLUMES_ROOT.exists():
-        return []
-    return list(VOLUMES_ROOT.rglob("*.pdf"))
-
 def format_bytes(n: int) -> str:
-    try: return f"{n/1024/1024:.1f} MB"
-    except: return "—"
+    try:
+        return f"{n/1024/1024:.1f} MB"
+    except:
+        return "—"
 
-# ================== DOWNLOAD LOG ==================
 def log_download(path: str, title: str, vol: str):
+    DOWNLOAD_LOG.parent.mkdir(parents=True, exist_ok=True)
     exists = DOWNLOAD_LOG.exists()
     with open(DOWNLOAD_LOG, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if not exists:
-            w.writerow(["timestamp","date","volume","title","path"])
+            w.writerow(["timestamp", "date", "volume", "title", "path"])
         now = datetime.now()
         w.writerow([now.isoformat(timespec="seconds"), str(date.today()), vol, title, path])
 
 def read_downloads_df() -> pd.DataFrame:
     if not DOWNLOAD_LOG.exists():
-        return pd.DataFrame(columns=["timestamp","date","volume","title","path"])
-    try: return pd.read_csv(DOWNLOAD_LOG)
-    except: return pd.DataFrame(columns=["timestamp","date","volume","title","path"])
+        return pd.DataFrame(columns=["timestamp", "date", "volume", "title", "path"])
+    try:
+        return pd.read_csv(DOWNLOAD_LOG)
+    except Exception:
+        return pd.DataFrame(columns=["timestamp", "date", "volume", "title", "path"])
 
-# ================== SUMMARIZER ==================
-def summarize_multi_chunk(chunks: List[str], model: SentenceTransformer, n_sentences: int = 8) -> str:
-    text = " ".join(chunks)
-    sents = re.split(r'(?<=[.!?]) +', text)
-    sents = [s.strip() for s in sents if len(s.strip()) > 30]
-    if not sents:
-        return "Summary unavailable."
-    sents = sents[:200]
-    emb = model.encode(sents, convert_to_tensor=True)
-    sim = emb @ emb.T
-    imp = sim.sum(dim=1).tolist()
-    top_idx = sorted(sorted(range(len(sents)), key=lambda i: imp[i], reverse=True)[:n_sentences])
-    return " ".join(sents[i] for i in top_idx)
+# ================== Embedding & Index ==================
+@st.cache_resource(show_spinner=False)
+def load_embedder():
+    return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# ================== FAISS INDEX ==================
-@st.cache_resource(show_spinner=True)
-def build_or_load_index() -> Optional[FAISS]:
-    emb = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-    faiss_path = INDEX_DIR / "index.faiss"
-    if faiss_path.exists():
-        try:
-            return FAISS.load_local(str(INDEX_DIR), emb, allow_dangerous_deserialization=True)
-        except:
-            pass
+@st.cache_resource(show_spinner=False)
+def build_or_load_index():
     pdfs = get_all_pdfs()
     if not pdfs:
-        st.info(f"No PDFs found under {VOLUMES_ROOT}")
+        st.warning("⚠️ No PDFs found under volumes. Please add files and refresh.")
         return None
-    st.info(f"📚 Building semantic index from {len(pdfs)} PDFs… (first run)")
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    index_path = INDEX_DIR / "faiss.index"
     docs = []
-    for i, pdf in enumerate(pdfs):
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    for pdf in pdfs:
         try:
             loader = PyPDFLoader(str(pdf))
             pages = loader.load()
-            chunks = splitter.split_documents(pages)
-            vol = extract_volume(pdf.name)
-            for c in chunks:
-                c.metadata.update({"source_file": pdf.name, "volume": vol, "path": str(pdf)})
-            docs.extend(chunks)
+            for chunk in splitter.split_documents(pages):
+                docs.append(Document(page_content=chunk.page_content, metadata={"path": str(pdf)}))
         except Exception as e:
-            st.warning(f"Skipping {pdf.name}: {e}")
-    db = FAISS.from_documents(docs, emb)
-    db.save_local(str(INDEX_DIR))
-    st.success("✅ Index built successfully.")
+            print(f"Error: {pdf} → {e}")
+    embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    db = FAISS.from_documents(docs, embedder)
+    db.save_local(str(index_path))
     return db
 
-@st.cache_resource
-def load_embedder() -> SentenceTransformer:
-    return SentenceTransformer("all-MiniLM-L6-v2")
+# ================== Summarization ==================
+def summarize_text(text: str, model: SentenceTransformer, max_sentences=8) -> str:
+    sents = re.split(r'(?<=[.!?]) +', text)
+    sents = [s.strip() for s in sents if len(s.strip()) > 40]
+    if not sents:
+        return "Summary unavailable."
+    scores = model.encode(sents, convert_to_tensor=True)
+    importance = scores @ scores.T
+    ranked = sorted(zip(sents, importance.sum(1).tolist()), key=lambda x: x[1], reverse=True)
+    return " ".join(s for s, _ in ranked[:max_sentences])
 
-# ================== HEADER ==================
-st.markdown(f"<h1 style='text-align:center'>{APP_TITLE}</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;color:#555;'>Discover, summarize, and download Stetson Law Review articles.</p>", unsafe_allow_html=True)
-st.markdown('<hr style="border:1px solid #C49E56"/>', unsafe_allow_html=True)
+# ================== Main App Layout ==================
+st.title(APP_TITLE)
+st.caption("Elegant, academic, and intuitive — built for Stetson Law students.")
+st.markdown("---")
 
-# ================== SIDEBAR ==================
-st.session_state.setdefault("reading_list", [])
-with st.sidebar:
-    st.markdown("### 📬 Contact")
-    st.markdown(f"- **Email:** {CONTACT_EMAIL}")
-    st.markdown("- **Institution:** Stetson University College of Law")
-    st.markdown("---")
-    st.markdown("### 📚 Reading List")
-    if st.session_state.reading_list:
-        for item in st.session_state.reading_list:
-            st.markdown(f"- {item}")
-        df = pd.DataFrame({"Articles": st.session_state.reading_list})
-        st.download_button("⬇️ Download List (CSV)", df.to_csv(index=False).encode(), "reading_list.csv")
-    else:
-        st.caption("No items yet.")
-    st.markdown("---")
-    dl_df = read_downloads_df()
-    st.markdown("### 📈 Insights (Live)")
-    st.markdown(f"- Total Downloads: **{len(dl_df)}**")
-    top_vol = dl_df["volume"].value_counts().idxmax() if not dl_df.empty else "—"
-    st.markdown(f"- Most Active Volume: **{top_vol}**")
-    st.caption(f"⚖️ {DISCLAIMER}")
+db = build_or_load_index()
+embedder = load_embedder()
 
-# ================== TABS ==================
-tab_search, tab_recent, tab_insights, tab_about = st.tabs(["🧠 Ask / Search", "📰 Recent", "📊 Insights", "📬 About"])
-db, embedder = build_or_load_index(), load_embedder()
+tab_search, tab_recent, tab_insights, tab_about = st.tabs(
+    ["🔍 Ask / Search", "📰 Recent Articles", "📊 Insights", "📬 About"]
+)
 
-# ================== SEARCH ==================
+# ================== SEARCH TAB ==================
 with tab_search:
-    st.markdown("### 🔎 Ask or Search the Archive")
-    query = st.text_input("Enter topic, author, or question", placeholder="e.g., Privacy law, AI in courts, First Amendment")
-    if query:
-        if not db:
-            st.warning(f"No PDFs found under {VOLUMES_ROOT}")
-        else:
-            with st.spinner("Searching and summarizing..."):
-                raw = db.similarity_search_with_score(query, k=30)
-                if not raw:
-                    st.info("No results found.")
-                else:
-                    for i, (doc, dist) in enumerate(raw[:15]):
-                        path = doc.metadata.get("path", "")
-                        if not os.path.exists(path): continue
-                        title = prettify_filename(Path(path).stem)
-                        vol = extract_volume(title)
-                        summary = summarize_multi_chunk([doc.page_content], embedder, n_sentences=8)
-                        rel = round(100 - dist*100, 1)
-                        st.markdown(f"""
-                        <div class="card">
-                            <h4>{title} <span class="score-badge">{rel}%</span></h4>
-                            <p class="meta">{vol}</p>
-                            <p>{summary}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        c1, c2 = st.columns([1,1])
-                        with c1:
-                            with open(path, "rb") as f:
-                                if st.download_button("📥 Download", f.read(), file_name=os.path.basename(path),
-                                                      mime="application/pdf", key=f"dl-{i}-{time.time()}"):
-                                    log_download(path, title, vol)
-                        with c2:
-                            if st.button("➕ Add to List", key=f"add-{i}"):
-                                if title not in st.session_state.reading_list:
-                                    st.session_state.reading_list.append(title)
-                                    st.success("✅ Added to Reading List")
+    st.subheader("🔎 Search the Archive")
+    query = st.text_input("Enter topic, author, or question:", placeholder="e.g., Privacy law, AI in courts, First Amendment")
 
-# ================== INSIGHTS ==================
-with tab_insights:
-    st.markdown("### 📊 Library Insights & Trends")
-    dl_df = read_downloads_df()
-    if dl_df.empty:
-        st.info("No downloads yet — charts appear after first download.")
+    if query and db:
+        with st.spinner("Retrieving, ranking, and summarizing…"):
+            results = db.similarity_search_with_score(query, k=15)
+            if not results:
+                st.info("No matching results.")
+            else:
+                st.success(f"Found {len(results)} relevant articles.")
+                for i, (doc, score) in enumerate(results):
+                    path = doc.metadata["path"]
+                    fname = Path(path).name
+                    vol = extract_volume(str(path))
+                    summary = summarize_text(doc.page_content, embedder)
+                    relevance = max(0, round(100 - score * 100, 1))
+
+                    st.markdown(f"""
+                    <div class="card">
+                        <h4>{prettify_filename(fname)} 
+                        <span class="score-badge">{relevance}%</span></h4>
+                        <p class="meta">{vol} • {format_bytes(Path(path).stat().st_size)}</p>
+                        <p style="text-align:justify">{summary}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    with open(path, "rb") as f:
+                        st.download_button("📥 Download PDF", f.read(), file_name=fname, mime="application/pdf", key=f"dl-{i}")
+                    log_download(path, prettify_filename(fname), vol)
+
     else:
-        col1, col2 = st.columns(2)
-        with col1:
-            top_dl = dl_df.groupby(["title","volume"]).size().reset_index(name="downloads").sort_values("downloads",ascending=False).head(10)
-            fig = px.bar(top_dl, x="downloads", y="title", color="volume", orientation="h", title="Most Downloaded")
-            st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            daily = dl_df.groupby("date").size().reset_index(name="downloads")
-            fig2 = px.line(daily, x="date", y="downloads", markers=True, title="Downloads Over Time")
-            st.plotly_chart(fig2, use_container_width=True)
+        st.caption("Tip: Try ‘privacy law’, ‘death penalty’, or ‘AI in courts’.")
 
-# ================== ABOUT ==================
+# ================== RECENT TAB ==================
+with tab_recent:
+    st.subheader("📰 Recently Added Articles")
+    pdfs = sorted(get_all_pdfs(), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not pdfs:
+        st.info("No PDFs found.")
+    else:
+        for pdf in pdfs[:12]:
+            title = prettify_filename(pdf.name)
+            vol = extract_volume(pdf.name)
+            st.markdown(f"<div class='card'><b>{title}</b><br>{vol} • {format_bytes(pdf.stat().st_size)}</div>", unsafe_allow_html=True)
+            with open(pdf, "rb") as f:
+                st.download_button("📥 Download PDF", f.read(), file_name=pdf.name, mime="application/pdf")
+
+# ================== INSIGHTS TAB ==================
+with tab_insights:
+    st.subheader("📊 Download Trends")
+    df = read_downloads_df()
+    if df.empty:
+        st.info("No downloads logged yet.")
+    else:
+        top_dl = df.groupby(["title", "volume"]).size().reset_index(name="downloads").sort_values("downloads", ascending=False).head(10)
+        fig = px.bar(top_dl, x="downloads", y="title", color="volume", orientation="h", title="Most Downloaded Articles")
+        st.plotly_chart(fig, use_container_width=True)
+
+        daily = df.groupby("date").size().reset_index(name="downloads")
+        fig2 = px.line(daily, x="date", y="downloads", title="Downloads Over Time", markers=True)
+        st.plotly_chart(fig2, use_container_width=True)
+
+# ================== ABOUT TAB ==================
 with tab_about:
-    st.markdown("### 📬 About")
+    st.subheader("📬 Contact & Info")
     st.markdown(f"""
-    <div class='card'>
-        <p><b>{APP_TITLE}</b> helps students discover and summarize Stetson Law Review articles using local AI search.</p>
-        <p><b>Features:</b> Semantic search (FAISS), 8-line summaries, downloads, reading list, and analytics dashboard.</p>
-        <p><b>Storage:</b> Place PDFs in <code>{VOLUMES_ROOT}</code>.</p>
-        <p><b>Contact:</b> {CONTACT_EMAIL}</p>
-        <p class='meta'>Local-first; no cloud API required.</p>
+    <div class="card">
+        <p><b>Email:</b> {CONTACT_EMAIL}</p>
+        <p><b>Institution:</b> Stetson University College of Law</p>
+        <p><b>About:</b> This assistant helps students explore Stetson Law Review archives via semantic search and summaries.</p>
+        <p><b>Disclaimer:</b> {DISCLAIMER}</p>
     </div>
     """, unsafe_allow_html=True)
-
-# ================== FOOTER ==================
-st.markdown(f"<div style='text-align:center;margin-top:40px;color:#666;'>⚖️ {DISCLAIMER}</div>", unsafe_allow_html=True)
