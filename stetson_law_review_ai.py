@@ -6,17 +6,17 @@ Fully local (no API keys). Designed for Stetson Law students.
 
 # ================== Auto-Install Dependencies ==================
 import sys, subprocess, importlib
-def ensure(pkg):
-    try:
-        importlib.import_module(pkg.replace("-", "_"))
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+#def ensure(pkg):
+ #   try:
+  #      importlib.import_module(pkg.replace("-", "_"))
+   # except ImportError:
+    #    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
 
-for p in [
-    "streamlit", "torch", "sentence-transformers", "faiss-cpu",
-    "langchain-community", "pypdf", "pandas", "plotly", "scikit-learn"
-]:
-    ensure(p)
+#for p in [
+ #   "streamlit", "torch", "sentence-transformers", "faiss-cpu",
+  #  "langchain-community", "pypdf", "pandas", "plotly", "scikit-learn"
+#]:
+ #   ensure(p)
 
 # ================== Imports ==================
 import os, re, io, time, itertools, zipfile, csv, math
@@ -494,3 +494,4 @@ st.markdown(f"""
   ⚖️ <em>{DISCLAIMER}</em>
 </div>
 """, unsafe_allow_html=True)
+
