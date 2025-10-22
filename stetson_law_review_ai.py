@@ -69,7 +69,7 @@ section[data-testid="stSidebar"] {{ background-color: {PRIMARY}; color: #fff; }}
 """, unsafe_allow_html=True)
 
 # ================== PATH CONFIG ==================
-VOLUMES_ROOT = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai\volumes")
+VOLUMES_ROOT = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai\volumes")  # ✅ FIXED PATH
 BASE_DIR = VOLUMES_ROOT.parent
 INDEX_DIR = BASE_DIR / "stetson_index"
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
