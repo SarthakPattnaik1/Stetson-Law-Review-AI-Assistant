@@ -12,11 +12,11 @@ import sys, subprocess, importlib
    # except ImportError:
     #    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
 
-#for p in [
- #   "streamlit", "torch", "sentence-transformers", "faiss-cpu",
-  #  "langchain-community", "pypdf", "pandas", "plotly", "scikit-learn"
-#]:
- #   ensure(p)
+for p in [
+    "streamlit", "torch", "sentence-transformers", "faiss-cpu",
+    "langchain-community", "pypdf", "pandas", "plotly", "scikit-learn"
+]:
+   ensure(p)
 
 # ================== Imports ==================
 import os, re, io, time, itertools, zipfile, csv, math
@@ -25,7 +25,7 @@ from datetime import datetime, date
 from typing import List, Dict, Optional, Tuple
 import streamlit as st
 import pandas as pd
-#import plotly.express as px
+import plotly.express as px
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sentence_transformers import SentenceTransformer
 from langchain_community.document_loaders import PyPDFLoader
@@ -494,5 +494,6 @@ st.markdown(f"""
   ⚖️ <em>{DISCLAIMER}</em>
 </div>
 """, unsafe_allow_html=True)
+
 
 
