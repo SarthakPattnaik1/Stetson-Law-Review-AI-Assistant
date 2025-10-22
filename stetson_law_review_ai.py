@@ -1,11 +1,10 @@
 """
 ⚖️ Stetson Law Review AI Assistant
 Elegant, academic, and intuitive — built for Stetson Law students.
-Semantic search • 8-line summaries • relevance ranking • download tracking.
 """
 
 # ================== IMPORTS ==================
-import os, re, io, csv, time
+import os, re, io, csv
 from pathlib import Path
 from datetime import datetime, date
 import streamlit as st
@@ -13,7 +12,7 @@ import pandas as pd
 import plotly.express as px
 from sentence_transformers import SentenceTransformer
 
-# --- LangChain compatibility imports ---
+# --- LangChain imports (with fallback) ---
 try:
     from langchain_community.vectorstores import FAISS
     from langchain_community.docstore.document import Document
@@ -27,20 +26,18 @@ except ImportError:
     from langchain.document_loaders import PyPDFLoader
     from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# ================== PATH CONFIGURATION ==================
-BASE_DIR = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai")
+# ================== PATHS ==================
+BASE_DIR = Path(__file__).resolve().parent        # dynamic base folder
 VOLUMES_DIR = BASE_DIR / "volumes"
 VOLUME_PATHS = [VOLUMES_DIR / f"Volume {i}" for i in range(30, 56)]
-PDF_DIRS = [p for p in VOLUME_PATHS if p.exists()]
 INDEX_DIR = BASE_DIR / "stetson_index"
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOAD_LOG = BASE_DIR / "downloads.csv"
 
-# ================== UI SETTINGS ==================
+# ================== UI CONFIG ==================
 APP_TITLE = "⚖️ Stetson Law Review AI Assistant"
 PRIMARY, GOLD, IVORY = "#0A3D62", "#C49E56", "#F5F3EE"
 CONTACT_EMAIL = "lreview@law.stetson.edu"
-DISCLAIMER = "Unofficial academic project by Sarthak Pattnaik using public Stetson Law Review archives."
 
 st.set_page_config(page_title=APP_TITLE, page_icon="⚖️", layout="wide")
 st.markdown(f"""
@@ -58,12 +55,13 @@ html, body, [class*="css"]  {{ background-color: {IVORY}; color:{PRIMARY}; font-
 </style>
 """, unsafe_allow_html=True)
 
-# ================== UTILITIES ==================
+# ================== HELPERS ==================
 def get_all_pdfs():
-    """Recursively find PDFs in Volume 30–55."""
+    """Recursively collect all PDFs under Volume 30–55."""
     pdfs = []
-    for vol in PDF_DIRS:
-        pdfs.extend(vol.rglob("*.pdf"))
+    for vol in VOLUME_PATHS:
+        if vol.exists():
+            pdfs.extend(list(vol.rglob("*.pdf")))
     return pdfs
 
 def prettify_filename(name):
@@ -80,12 +78,11 @@ def format_bytes(n):
         return "—"
 
 def log_download(path, title, vol):
-    DOWNLOAD_LOG.parent.mkdir(parents=True, exist_ok=True)
     exists = DOWNLOAD_LOG.exists()
     with open(DOWNLOAD_LOG, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if not exists:
-            w.writerow(["timestamp", "date", "volume", "title", "path"])
+            w.writerow(["timestamp","date","volume","title","path"])
         now = datetime.now()
         w.writerow([now.isoformat(timespec="seconds"), str(date.today()), vol, title, path])
 
@@ -106,7 +103,7 @@ def load_embedder():
 def build_or_load_index():
     pdfs = get_all_pdfs()
     if not pdfs:
-        st.warning("⚠️ No PDFs found. Please check that volumes (30–55) exist and contain PDF files.")
+        st.warning("⚠️ No PDFs found. Check that Volume 30–55 folders exist and contain PDFs.")
         return None
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     all_docs = []
@@ -126,7 +123,6 @@ def build_or_load_index():
     return db
 
 def summarize_text(text, model, n=8):
-    """Summarize a chunk into ~8 meaningful sentences."""
     sents = re.split(r'(?<=[.!?]) +', text)
     sents = [s.strip() for s in sents if len(s.strip()) > 40]
     if not sents:
@@ -136,7 +132,7 @@ def summarize_text(text, model, n=8):
     ranked = sorted(zip(sents, score.sum(1).tolist()), key=lambda x: x[1], reverse=True)
     return " ".join([s for s, _ in ranked[:n]])
 
-# ================== LAYOUT ==================
+# ================== MAIN UI ==================
 st.title(APP_TITLE)
 st.caption("Elegant, academic, and intuitive — built for Stetson Law students.")
 st.markdown("---")
@@ -144,12 +140,16 @@ st.markdown("---")
 embedder = load_embedder()
 db = build_or_load_index()
 
+pdf_count = len(get_all_pdfs())
+st.success(f"📂 Detected {pdf_count} PDF files across Volumes 30 – 55.")
+
 tabs = st.tabs(["🔍 Search", "📰 Recent", "📊 Insights", "📬 About"])
 
 # === SEARCH TAB ===
 with tabs[0]:
     st.subheader("🔎 Search the Archive")
-    query = st.text_input("Enter topic, author, or question:", placeholder="e.g., Privacy law, AI in courts, Death penalty")
+    query = st.text_input("Enter topic, author, or question:",
+                          placeholder="e.g., Privacy law, Death penalty, AI in courts")
 
     if query and db:
         with st.spinner("Searching and summarizing..."):
@@ -163,9 +163,8 @@ with tabs[0]:
                         continue
                     title = prettify_filename(Path(path).name)
                     vol = extract_volume(path)
-                    rel = round(100 - score*100, 1)
+                    rel = round(max(0, 100 - score*100), 1)
                     summary = summarize_text(doc.page_content, embedder)
-
                     st.markdown(f"""
                     <div class='card'>
                         <h4>{title}<span class='score-badge'>{rel}%</span></h4>
@@ -173,26 +172,32 @@ with tabs[0]:
                         <p style='text-align:justify'>{summary}</p>
                     </div>
                     """, unsafe_allow_html=True)
-
                     with open(path, "rb") as f:
-                        st.download_button("📥 Download PDF", f.read(), file_name=Path(path).name, mime="application/pdf", key=f"d-{i}")
+                        st.download_button("📥 Download PDF", f.read(),
+                                           file_name=Path(path).name,
+                                           mime="application/pdf",
+                                           key=f"d-{i}")
                     log_download(path, title, vol)
     else:
-        st.caption("Tip: Try 'privacy law', 'death penalty', or 'AI in courts'.")
+        st.caption("Tip → Try 'privacy law', 'AI ethics', or 'death penalty'.")
 
 # === RECENT TAB ===
 with tabs[1]:
     st.subheader("📰 Recently Added Articles")
-    pdfs = sorted(get_all_pdfs(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    pdfs = sorted(get_all_pdfs(),
+                  key=lambda p: p.stat().st_mtime if p.exists() else 0,
+                  reverse=True)
     if not pdfs:
         st.info("No PDFs found yet.")
     else:
         for pdf in pdfs[:10]:
             t = prettify_filename(pdf.name)
             v = extract_volume(pdf.name)
-            st.markdown(f"<div class='card'><b>{t}</b><br>{v} • {format_bytes(pdf.stat().st_size)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='card'><b>{t}</b><br>{v} • {format_bytes(pdf.stat().st_size)}</div>",
+                        unsafe_allow_html=True)
             with open(pdf, "rb") as f:
-                st.download_button("📥 Download PDF", f.read(), file_name=pdf.name, mime="application/pdf")
+                st.download_button("📥 Download PDF", f.read(),
+                                   file_name=pdf.name, mime="application/pdf")
 
 # === INSIGHTS TAB ===
 with tabs[2]:
@@ -201,8 +206,14 @@ with tabs[2]:
     if df.empty:
         st.info("No downloads yet.")
     else:
-        top_dl = df.groupby(["title","volume"]).size().reset_index(name="downloads").sort_values("downloads", ascending=False).head(10)
-        st.plotly_chart(px.bar(top_dl, x="downloads", y="title", color="volume", orientation="h", title="Most Downloaded Articles"), use_container_width=True)
+        top_dl = (df.groupby(["title","volume"])
+                    .size()
+                    .reset_index(name="downloads")
+                    .sort_values("downloads", ascending=False)
+                    .head(10))
+        st.plotly_chart(px.bar(top_dl, x="downloads", y="title", color="volume",
+                               orientation="h", title="Most Downloaded Articles"),
+                        use_container_width=True)
 
 # === ABOUT TAB ===
 with tabs[3]:
@@ -211,7 +222,7 @@ with tabs[3]:
     <div class='card'>
         <p><b>Email:</b> {CONTACT_EMAIL}</p>
         <p><b>Institution:</b> Stetson University College of Law</p>
-        <p>This app helps students discover, summarize, and download Stetson Law Review articles quickly.</p>
-        <p><i>{DISCLAIMER}</i></p>
+        <p>This assistant helps students discover, summarize, and download Stetson Law Review articles quickly.</p>
+        <p><i>Unofficial academic project by Sarthak Pattnaik.</i></p>
     </div>
     """, unsafe_allow_html=True)
