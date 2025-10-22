@@ -13,6 +13,7 @@ import pandas as pd
 import plotly.express as px
 from sentence_transformers import SentenceTransformer
 
+# --- LangChain compatibility imports ---
 try:
     from langchain_community.vectorstores import FAISS
     from langchain_community.docstore.document import Document
@@ -26,7 +27,7 @@ except ImportError:
     from langchain.document_loaders import PyPDFLoader
     from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# ================== PATHS ==================
+# ================== PATH CONFIGURATION ==================
 BASE_DIR = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai")
 VOLUMES_DIR = BASE_DIR / "volumes"
 VOLUME_PATHS = [VOLUMES_DIR / f"Volume {i}" for i in range(30, 56)]
@@ -35,7 +36,7 @@ INDEX_DIR = BASE_DIR / "stetson_index"
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOAD_LOG = BASE_DIR / "downloads.csv"
 
-# ================== UI STYLES ==================
+# ================== UI SETTINGS ==================
 APP_TITLE = "⚖️ Stetson Law Review AI Assistant"
 PRIMARY, GOLD, IVORY = "#0A3D62", "#C49E56", "#F5F3EE"
 CONTACT_EMAIL = "lreview@law.stetson.edu"
@@ -59,6 +60,7 @@ html, body, [class*="css"]  {{ background-color: {IVORY}; color:{PRIMARY}; font-
 
 # ================== UTILITIES ==================
 def get_all_pdfs():
+    """Recursively find PDFs in Volume 30–55."""
     pdfs = []
     for vol in PDF_DIRS:
         pdfs.extend(vol.rglob("*.pdf"))
@@ -104,7 +106,7 @@ def load_embedder():
 def build_or_load_index():
     pdfs = get_all_pdfs()
     if not pdfs:
-        st.warning("⚠️ No PDFs found under 'volumes'. Please add PDF files in Volume folders.")
+        st.warning("⚠️ No PDFs found. Please check that volumes (30–55) exist and contain PDF files.")
         return None
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     all_docs = []
@@ -124,6 +126,7 @@ def build_or_load_index():
     return db
 
 def summarize_text(text, model, n=8):
+    """Summarize a chunk into ~8 meaningful sentences."""
     sents = re.split(r'(?<=[.!?]) +', text)
     sents = [s.strip() for s in sents if len(s.strip()) > 40]
     if not sents:
@@ -146,7 +149,7 @@ tabs = st.tabs(["🔍 Search", "📰 Recent", "📊 Insights", "📬 About"])
 # === SEARCH TAB ===
 with tabs[0]:
     st.subheader("🔎 Search the Archive")
-    query = st.text_input("Enter topic, author, or question:", placeholder="e.g., Privacy law, AI in courts, First Amendment")
+    query = st.text_input("Enter topic, author, or question:", placeholder="e.g., Privacy law, AI in courts, Death penalty")
 
     if query and db:
         with st.spinner("Searching and summarizing..."):
@@ -175,7 +178,7 @@ with tabs[0]:
                         st.download_button("📥 Download PDF", f.read(), file_name=Path(path).name, mime="application/pdf", key=f"d-{i}")
                     log_download(path, title, vol)
     else:
-        st.caption("Tip: Try ‘privacy law’, ‘death penalty’, or ‘AI in courts’.")
+        st.caption("Tip: Try 'privacy law', 'death penalty', or 'AI in courts'.")
 
 # === RECENT TAB ===
 with tabs[1]:
