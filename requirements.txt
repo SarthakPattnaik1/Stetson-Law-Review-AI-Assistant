@@ -4,6 +4,4 @@ faiss-cpu
 pypdf
 plotly
 requests
-pdf2image
-pytesseract
-pillow
+pandas
