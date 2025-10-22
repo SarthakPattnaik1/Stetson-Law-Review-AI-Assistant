@@ -1,13 +1,14 @@
 """
 ⚖️ Stetson Law Review AI Assistant
 Elegant, academic, and intuitive — built for Stetson Law students.
-Supports semantic search, summaries, relevance ranking, and downloads.
+Supports semantic search, summaries, relevance ranking, downloads, and insights.
 """
 
 # ================== Auto Install Dependencies ==================
-import importlib, subprocess, sys, os
+import importlib, subprocess, sys
 
 def ensure(pkg):
+    """Auto-installs missing dependencies."""
     try:
         importlib.import_module(pkg.replace("-", "_"))
     except ImportError:
@@ -15,24 +16,34 @@ def ensure(pkg):
 
 packages = [
     "streamlit", "torch", "sentence-transformers", "faiss-cpu",
-    "langchain-community", "pypdf", "pandas", "plotly"
+    "langchain", "langchain-community", "langchain-text-splitters",
+    "pypdf", "pandas", "plotly"
 ]
 for p in packages:
     ensure(p)
 
 # ================== Imports ==================
-import re, io, time, zipfile, csv
+import os, re, io, csv, time, zipfile
 from pathlib import Path
 from datetime import datetime, date
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from sentence_transformers import SentenceTransformer
-from langchain_community.vectorstores import FAISS
-from langchain_community.docstore.document import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+# --- Fix for LangChain version differences ---
+try:
+    from langchain_community.vectorstores import FAISS
+    from langchain_community.docstore.document import Document
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:
+    from langchain.vectorstores import FAISS
+    from langchain.docstore.document import Document
+    from langchain.embeddings import HuggingFaceEmbeddings
+    from langchain.document_loaders import PyPDFLoader
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # ================== Paths ==================
 BASE_DIR = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai")
@@ -49,7 +60,7 @@ PRIMARY, GOLD, IVORY = "#0A3D62", "#C49E56", "#F5F3EE"
 CONTACT_EMAIL = "lreview@law.stetson.edu"
 DISCLAIMER = "Unofficial academic project by Sarthak Pattnaik."
 
-# ================== Streamlit UI Config ==================
+# ================== Streamlit Config ==================
 st.set_page_config(page_title=APP_TITLE, layout="wide", page_icon="⚖️")
 
 st.markdown(
@@ -57,8 +68,9 @@ st.markdown(
     <style>
     html, body, [class*="css"]  {{ background-color: {IVORY}; color:{PRIMARY}; font-family: Georgia; }}
     h1, h2, h3, h4 {{ color: {PRIMARY}; font-family: Georgia; }}
-    .card {{ background: white; border-radius: 12px; padding: 16px; margin: 8px 0; border: 1px solid {GOLD}; }}
+    .card {{ background: white; border-radius: 14px; padding: 16px; margin: 8px 0; border: 1px solid {GOLD}; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }}
     .score-badge {{ float:right; background:{GOLD}; color:{PRIMARY}; padding:3px 8px; border-radius:8px; font-size:12px; }}
+    .meta {{ color:#444; font-size:13px; }}
     </style>
     """,
     unsafe_allow_html=True
@@ -109,7 +121,7 @@ def read_downloads_df() -> pd.DataFrame:
 def load_embedder():
     return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=True)
 def build_or_load_index():
     pdfs = get_all_pdfs()
     if not pdfs:
@@ -125,7 +137,7 @@ def build_or_load_index():
             for chunk in splitter.split_documents(pages):
                 docs.append(Document(page_content=chunk.page_content, metadata={"path": str(pdf)}))
         except Exception as e:
-            print(f"Error: {pdf} → {e}")
+            print(f"Error reading {pdf}: {e}")
     embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     db = FAISS.from_documents(docs, embedder)
     db.save_local(str(index_path))
@@ -142,7 +154,7 @@ def summarize_text(text: str, model: SentenceTransformer, max_sentences=8) -> st
     ranked = sorted(zip(sents, importance.sum(1).tolist()), key=lambda x: x[1], reverse=True)
     return " ".join(s for s, _ in ranked[:max_sentences])
 
-# ================== Main App Layout ==================
+# ================== Main Layout ==================
 st.title(APP_TITLE)
 st.caption("Elegant, academic, and intuitive — built for Stetson Law students.")
 st.markdown("---")
@@ -168,6 +180,8 @@ with tab_search:
                 st.success(f"Found {len(results)} relevant articles.")
                 for i, (doc, score) in enumerate(results):
                     path = doc.metadata["path"]
+                    if not os.path.exists(path):
+                        continue
                     fname = Path(path).name
                     vol = extract_volume(str(path))
                     summary = summarize_text(doc.page_content, embedder)
@@ -185,7 +199,6 @@ with tab_search:
                     with open(path, "rb") as f:
                         st.download_button("📥 Download PDF", f.read(), file_name=fname, mime="application/pdf", key=f"dl-{i}")
                     log_download(path, prettify_filename(fname), vol)
-
     else:
         st.caption("Tip: Try ‘privacy law’, ‘death penalty’, or ‘AI in courts’.")
 
