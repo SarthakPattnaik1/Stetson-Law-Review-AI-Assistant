@@ -2,6 +2,6 @@ streamlit
 sentence-transformers
 faiss-cpu
 pypdf
-plotly
 requests
 pandas
+plotly
