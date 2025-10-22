@@ -1,17 +1,16 @@
 """
-⚖️ Stetson Law Review AI Assistant — Final Edition
+⚖️ Stetson Law Review AI Assistant — Hybrid Edition
 Elegant, academic, and intuitive — built for Stetson Law students.
-Fully OCR-enabled for scanned PDFs across Volumes 30–55.
+✅ Works on both Local PC (OCR enabled) and Streamlit Cloud (OCR disabled).
 """
 
 # ================== IMPORTS ==================
-import os, re, io, csv
+import os, re, io, csv, platform
 from pathlib import Path
 from datetime import datetime, date
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from PIL import Image
 
 # LangChain + NLP
 from langchain_community.document_loaders import PyPDFLoader
@@ -21,12 +20,15 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.docstore.document import Document
 from sentence_transformers import SentenceTransformer
 
-# OCR
-import pytesseract
-from pdf2image import convert_from_path
-
-# Set tesseract path for Windows
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Optional OCR (local-only)
+USE_OCR = False
+if platform.system() == "Windows":
+    tess_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(tess_path):
+        USE_OCR = True
+        import pytesseract
+        from pdf2image import convert_from_path
+        pytesseract.pytesseract.tesseract_cmd = tess_path
 
 # ================== CONFIG ==================
 APP_TITLE = "⚖️ Stetson Law Review AI Assistant"
@@ -72,7 +74,6 @@ html, body, [class*="css"] {{
 
 # ================== HELPERS ==================
 def get_all_pdfs():
-    """Collect all PDFs under Volume 30–55 folders."""
     pdfs = []
     for vol in VOLUME_PATHS:
         if vol.exists():
@@ -87,10 +88,8 @@ def extract_volume(path):
     return f"Volume {m.group(1)}" if m else "Unknown Volume"
 
 def format_bytes(n):
-    try:
-        return f"{n/1024/1024:.1f} MB"
-    except:
-        return "—"
+    try: return f"{n/1024/1024:.1f} MB"
+    except: return "—"
 
 def log_download(path, title, vol):
     exists = DOWNLOAD_LOG.exists()
@@ -109,9 +108,9 @@ def read_downloads_df():
     except Exception:
         return pd.DataFrame(columns=["timestamp","date","volume","title","path"])
 
-# ================== OCR TEXT EXTRACTION ==================
+# ================== TEXT EXTRACTION ==================
 def extract_text_from_pdf(pdf_path):
-    """Extract text from a PDF — fallback to OCR if no text layer."""
+    """Extract text; use OCR only if available."""
     try:
         loader = PyPDFLoader(str(pdf_path))
         pages = loader.load()
@@ -121,23 +120,23 @@ def extract_text_from_pdf(pdf_path):
     except Exception:
         pass
 
-    # Fallback to OCR
-    text_blocks = []
-    try:
-        images = convert_from_path(str(pdf_path), dpi=200)
-        for img in images:
-            text_blocks.append(pytesseract.image_to_string(img))
-        return "\n".join(text_blocks)
-    except Exception as e:
-        print(f"OCR failed for {pdf_path}: {e}")
-        return ""
+    if USE_OCR:
+        try:
+            from pdf2image import convert_from_path
+            import pytesseract
+            pages = convert_from_path(str(pdf_path), dpi=200)
+            return "\n".join([pytesseract.image_to_string(pg) for pg in pages])
+        except Exception as e:
+            print(f"OCR failed for {pdf_path}: {e}")
+            return ""
+    return ""
 
 # ================== INDEX BUILD ==================
 @st.cache_resource
 def build_index():
     pdfs = get_all_pdfs()
     if not pdfs:
-        st.warning("⚠️ No PDFs found. Make sure Volume 30–55 folders contain files.")
+        st.warning("⚠️ No PDFs found. Please ensure Volume 30–55 folders contain PDFs.")
         return None
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     all_docs = []
@@ -180,7 +179,10 @@ embedder = load_embedder()
 db = build_index()
 
 pdf_count = len(get_all_pdfs())
-st.success(f"📚 Detected {pdf_count} PDFs across Volumes 30–55.")
+if pdf_count:
+    st.success(f"📚 Detected {pdf_count} PDFs across Volumes 30–55.")
+else:
+    st.warning("No PDFs found. Ensure your folder path is correct.")
 
 tabs = st.tabs(["🔍 Search", "📂 Browse by Volume", "📊 Insights", "📬 About"])
 
