@@ -1,16 +1,11 @@
 """
-⚖️ Stetson Law Review AI Assistant — Data & Insights Edition (Windows / Streamlit)
-Elegant, semantic search + 8-line summaries + insights + downloads tracking.
-Fully local (no API keys). Designed for Stetson Law students.
-
-HOW TO RUN (PowerShell):
-  cd "C:\Users\spattnaik\Downloads\stetson-law-review-ai"
-  python -m streamlit run stetson_law_review_ai.py
+⚖️ Stetson Law Review AI Assistant — Windows & Streamlit Version
+Elegant, semantic search + 8-line summaries + analytics + reading list.
+Fully local, no API keys, works with random filenames.
 """
 
-# ================== Auto-Install Dependencies ==================
+# ================== Auto Install ==================
 import sys, subprocess, importlib
-
 def ensure(pkg):
     try:
         importlib.import_module(pkg.replace("-", "_"))
@@ -25,11 +20,10 @@ for p in [
     ensure(p)
 
 # ================== Imports ==================
-import os, re, io, time, itertools, zipfile, csv
+import os, re, io, time, csv
 from pathlib import Path
 from datetime import datetime, date
 from typing import List, Dict, Optional
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -68,14 +62,14 @@ section[data-testid="stSidebar"] {{ background-color: {PRIMARY}; color: #fff; }}
 </style>
 """, unsafe_allow_html=True)
 
-# ================== PATH CONFIG ==================
-VOLUMES_ROOT = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai\volumes")  # ✅ FIXED PATH
+# ================== PATHS ==================
+VOLUMES_ROOT = Path(r"C:\Users\spattnaik\Downloads\stetson-law-review-ai\volumes")  # ✅ RAW STRING FIX
 BASE_DIR = VOLUMES_ROOT.parent
 INDEX_DIR = BASE_DIR / "stetson_index"
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOAD_LOG = BASE_DIR / "downloads.csv"
 
-# ================== UTILITIES ==================
+# ================== HELPERS ==================
 def prettify_filename(name: str) -> str:
     return re.sub(r"[_\-]+", " ", Path(name).stem).strip().title()
 
@@ -98,7 +92,7 @@ def log_download(path: str, title: str, vol: str):
     with open(DOWNLOAD_LOG, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if not exists:
-            w.writerow(["timestamp", "date", "volume", "title", "path"])
+            w.writerow(["timestamp","date","volume","title","path"])
         now = datetime.now()
         w.writerow([now.isoformat(timespec="seconds"), str(date.today()), vol, title, path])
 
@@ -108,7 +102,7 @@ def read_downloads_df() -> pd.DataFrame:
     try: return pd.read_csv(DOWNLOAD_LOG)
     except: return pd.DataFrame(columns=["timestamp","date","volume","title","path"])
 
-# ================== SUMMARIES ==================
+# ================== SUMMARIZER ==================
 def summarize_multi_chunk(chunks: List[str], model: SentenceTransformer, n_sentences: int = 8) -> str:
     text = " ".join(chunks)
     sents = re.split(r'(?<=[.!?]) +', text)
@@ -139,8 +133,7 @@ def build_or_load_index() -> Optional[FAISS]:
     st.info(f"📚 Building semantic index from {len(pdfs)} PDFs… (first run)")
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
     docs = []
-    progress = st.progress(0.0)
-    for i, pdf in enumerate(pdfs, 1):
+    for i, pdf in enumerate(pdfs):
         try:
             loader = PyPDFLoader(str(pdf))
             pages = loader.load()
@@ -151,7 +144,6 @@ def build_or_load_index() -> Optional[FAISS]:
             docs.extend(chunks)
         except Exception as e:
             st.warning(f"Skipping {pdf.name}: {e}")
-        progress.progress(i/len(pdfs))
     db = FAISS.from_documents(docs, emb)
     db.save_local(str(INDEX_DIR))
     st.success("✅ Index built successfully.")
@@ -164,7 +156,7 @@ def load_embedder() -> SentenceTransformer:
 # ================== HEADER ==================
 st.markdown(f"<h1 style='text-align:center'>{APP_TITLE}</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align:center;color:#555;'>Discover, summarize, and download Stetson Law Review articles.</p>", unsafe_allow_html=True)
-st.markdown('<hr class="gold"/>', unsafe_allow_html=True)
+st.markdown('<hr style="border:1px solid #C49E56"/>', unsafe_allow_html=True)
 
 # ================== SIDEBAR ==================
 st.session_state.setdefault("reading_list", [])
@@ -179,9 +171,6 @@ with st.sidebar:
             st.markdown(f"- {item}")
         df = pd.DataFrame({"Articles": st.session_state.reading_list})
         st.download_button("⬇️ Download List (CSV)", df.to_csv(index=False).encode(), "reading_list.csv")
-        if st.button("🧹 Clear List"): 
-            st.session_state.reading_list = []
-            st.experimental_rerun()
     else:
         st.caption("No items yet.")
     st.markdown("---")
@@ -205,17 +194,13 @@ with tab_search:
             st.warning(f"No PDFs found under {VOLUMES_ROOT}")
         else:
             with st.spinner("Searching and summarizing..."):
-                raw = db.similarity_search_with_score(query, k=40)
-                results = []
-                for d, dist in raw:
-                    path = d.metadata.get("path", "")
-                    if not os.path.exists(path): continue
-                    results.append((d, dist, path))
-                if not results:
+                raw = db.similarity_search_with_score(query, k=30)
+                if not raw:
                     st.info("No results found.")
                 else:
-                    st.markdown(f"### {len(results)} Articles Found")
-                    for i, (doc, dist, path) in enumerate(results[:15]):
+                    for i, (doc, dist) in enumerate(raw[:15]):
+                        path = doc.metadata.get("path", "")
+                        if not os.path.exists(path): continue
                         title = prettify_filename(Path(path).stem)
                         vol = extract_volume(title)
                         summary = summarize_multi_chunk([doc.page_content], embedder, n_sentences=8)
@@ -238,21 +223,6 @@ with tab_search:
                                 if title not in st.session_state.reading_list:
                                     st.session_state.reading_list.append(title)
                                     st.success("✅ Added to Reading List")
-
-# ================== RECENT ==================
-with tab_recent:
-    st.markdown("### 📰 Recently Added Articles")
-    pdfs = sorted(get_all_pdfs(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
-    if not pdfs:
-        st.info("No PDFs found.")
-    for pdf in pdfs[:15]:
-        title = prettify_filename(pdf.name)
-        vol = extract_volume(pdf.name)
-        mtime = datetime.fromtimestamp(pdf.stat().st_mtime).strftime("%b %d, %Y")
-        st.markdown(f"<div class='card'><h4>{title}</h4><p class='meta'>{vol} • {mtime} • {format_bytes(pdf.stat().st_size)}</p></div>", unsafe_allow_html=True)
-        with open(pdf, "rb") as f:
-            if st.download_button("📥 Download PDF", f.read(), file_name=pdf.name, mime="application/pdf", key=f"recent-{pdf}-{time.time()}"):
-                log_download(str(pdf), title, vol)
 
 # ================== INSIGHTS ==================
 with tab_insights:
@@ -277,7 +247,7 @@ with tab_about:
     st.markdown(f"""
     <div class='card'>
         <p><b>{APP_TITLE}</b> helps students discover and summarize Stetson Law Review articles using local AI search.</p>
-        <p><b>Features:</b> Semantic search (FAISS), 8-line summaries, downloads, reading list, and insights dashboard.</p>
+        <p><b>Features:</b> Semantic search (FAISS), 8-line summaries, downloads, reading list, and analytics dashboard.</p>
         <p><b>Storage:</b> Place PDFs in <code>{VOLUMES_ROOT}</code>.</p>
         <p><b>Contact:</b> {CONTACT_EMAIL}</p>
         <p class='meta'>Local-first; no cloud API required.</p>
