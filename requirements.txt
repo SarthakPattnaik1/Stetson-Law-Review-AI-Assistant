@@ -1,10 +1,9 @@
 streamlit
-torch
 sentence-transformers
 faiss-cpu
-langchain
-langchain-community
-langchain-text-splitters
 pypdf
-pandas
 plotly
+requests
+pdf2image
+pytesseract
+pillow
